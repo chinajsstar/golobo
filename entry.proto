@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package golobo;
+
+message Target {
+    string ip = 1;
+    int64 rpc = 2;
+	int64 tunnel = 3;
+	string service = 4;
+	string version = 5;
+}
