@@ -16,10 +16,20 @@ import (
 	"google.golang.org/grpc"
 )
 
+type _alive struct {
+	targets map[string]map[string]map[string]*Target
+}
+
 var (
-	logger = logging.MustGetLogger("golobo")
-	group  sync.Mutex
-	alive  = make(map[string]map[string]map[string]*Target, 100) // service >> version >> [target]
+	logger   = logging.MustGetLogger("golobo")
+	group    sync.Mutex
+	alive    = &_alive{make(map[string]map[string]map[string]*Target, 100)} // service >> version >> [target]
+	once     sync.Once
+	initinal = false
+)
+
+const (
+	path = "/golobo/rpc/server/lists"
 )
 
 type Event struct {
@@ -32,17 +42,15 @@ func (l *MyLog) Printf(msg string, args ...interface{}) {
 	//	logger.Info(msg, args)
 }
 
-func Init(servers []string, scheme string, auth []byte, path string, _error chan error) {
+func Init(servers []string, _error chan error) {
 
-	conn, _, err := zk.Connect(servers, time.Second*2)
+	conn, _, err := initPath(servers)
 	if err != nil {
 		logger.Error(err)
 		_error <- err
 		return
 	}
 	defer conn.Close()
-	conn.SetLogger(new(MyLog))
-	conn.AddAuth(scheme, auth)
 
 	var ctx context.Context
 	var cancel context.CancelFunc
@@ -76,13 +84,13 @@ func Init(servers []string, scheme string, auth []byte, path string, _error chan
 			go func() {
 				for _ = range ticker.C {
 					for _, target := range targetList {
-						if _, ok := alive[target.Service]; !ok {
-							alive[target.Service] = make(map[string]map[string]*Target, 100)
+						if _, ok := alive.targets[target.Service]; !ok {
+							alive.targets[target.Service] = make(map[string]map[string]*Target, 100)
 						}
-						if _, ok := alive[target.Service][target.Version]; !ok {
-							alive[target.Service][target.Version] = make(map[string]*Target, 100)
+						if _, ok := alive.targets[target.Service][target.Version]; !ok {
+							alive.targets[target.Service][target.Version] = make(map[string]*Target, 100)
 						}
-						if _, ok := alive[target.Service][target.Version][target.String()]; !ok {
+						if _, ok := alive.targets[target.Service][target.Version][target.String()]; !ok {
 							go tunnel.ConnecToServer(fmt.Sprint(target.GetIp(), ":", strconv.FormatInt(target.GetTunnel(), 10)), &Event{target})
 						}
 					}
@@ -97,61 +105,93 @@ func Init(servers []string, scheme string, auth []byte, path string, _error chan
 
 }
 
+func initPath(servers []string) (*zk.Conn, []zk.ACL, error) {
+
+	conn, _, err := zk.Connect(servers, time.Second*2)
+	if err != nil {
+		logger.Error(err)
+		return nil, nil, err
+	}
+	conn.SetLogger(new(MyLog))
+
+	digestACL := zk.DigestACL(zk.PermAll, "shimazaki", "haruka")
+	conn.AddAuth(digestACL[0].Scheme, []byte("shimazaki:haruka"))
+
+	if initinal {
+		return conn, digestACL, nil
+	}
+	conn.Create("/golobo", []byte("paruru"), 0, digestACL)
+	conn.Create("/golobo/rpc", []byte("paruru"), 0, digestACL)
+	conn.Create("/golobo/rpc/server", []byte("paruru"), 0, digestACL)
+	conn.Create("/golobo/rpc/server/lists", []byte("paruru"), 0, digestACL)
+
+	once.Do(func() {
+		initinal = true
+	})
+	return conn, digestACL, nil
+}
+
 func GetConn(service, version string) (*grpc.ClientConn, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithInsecure())
 	opts = append(opts, grpc.WithTimeout(time.Second*2))
 
-	err := errors.New("no server alive now")
-
-	if _, ok := alive[service]; !ok {
-		return nil, err
+	addr := alive.get(service, version)
+	if addr == "" {
+		return nil, errors.New("no server alive now")
 	}
 
-	if _, ok := alive[service][version]; !ok {
-		return nil, err
-	}
+	return grpc.Dial(addr, opts...)
+}
 
-	size := len(alive[service][version])
+func (t *_alive) addTarget(target *Target) {
+	group.Lock()
+	defer group.Unlock()
+	t.targets[target.Service][target.Version][target.String()] = target
+}
+
+func (t *_alive) removeTarget(target *Target) {
+	group.Lock()
+	defer group.Unlock()
+	delete(t.targets[target.Service][target.Version], target.String())
+}
+
+func (t *_alive) get(service, version string) string {
+	group.Lock()
+	defer group.Unlock()
+
+	if _, ok := t.targets[service]; !ok {
+		return ""
+	}
+	if _, ok := t.targets[service][version]; !ok {
+		return ""
+	}
+	size := len(t.targets[service][version])
 	if size == 0 {
-		return nil, err
+		return ""
 	}
 	size = rand.Intn(size)
 	counter := 0
 	var addr string
 
-	for _, target := range alive[service][version] {
+	for _, target := range t.targets[service][version] {
 		if counter == size {
 			addr = fmt.Sprint(target.GetIp(), ":", strconv.FormatInt(target.GetRpc(), 10))
 			break
 		}
 		counter += 1
 	}
-
-	if addr == "" {
-		return nil, err
-	}
-	return grpc.Dial(addr, opts...)
-}
-
-func addTarget(target *Target) {
-	group.Lock()
-	defer group.Unlock()
-	alive[target.Service][target.Version][target.String()] = target
-}
-
-func removeTarget(target *Target) {
-	group.Lock()
-	defer group.Unlock()
-	delete(alive[target.Service][target.Version], target.String())
+	return addr
 }
 
 func (e *Event) OnOpen(handle tunnel.Handle) {
-	addTarget(e.target)
+	//	logger.Info("addTarget", e.target.String())
+	alive.addTarget(e.target)
 }
 
 func (e *Event) OnClose(localAddr string) {
-	removeTarget(e.target)
+	//	logger.Info("removeTarget", e.target.String())
+	alive.removeTarget(e.target)
 }
 
 func (e *Event) OnMessage(handle tunnel.Handle, payload []byte) {
@@ -162,7 +202,7 @@ func _init() {
 
 	go func() {
 		for _ = range time.NewTicker(time.Second * 10).C {
-			for service, versionMap := range alive {
+			for service, versionMap := range alive.targets {
 				for version, servers := range versionMap {
 					for server, _ := range servers {
 						logger.Info(service, version, server)
@@ -172,4 +212,20 @@ func _init() {
 			logger.Info("------------------------------------------")
 		}
 	}()
+}
+
+func Publish(servers []string, target *Target) error {
+
+	conn, digestACL, err := initPath(servers)
+	if err != nil {
+		logger.Error(err)
+		return err
+	}
+	defer conn.Close()
+
+	_, err = conn.Create(fmt.Sprint(path, "/", target.String()), []byte("paruru"), 0, digestACL)
+	if err != nil {
+		return err
+	}
+	return nil
 }

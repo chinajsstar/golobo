@@ -8,17 +8,16 @@ import (
 	"time"
 
 	"github.com/amamina/golobo"
-	pb "github.com/amamina/golobo/test"
+	pb "github.com/amamina/golobo/example"
 	"github.com/amamina/tunnel"
 	"github.com/op/go-logging"
-	"github.com/samuel/go-zookeeper/zk"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
 var (
-	logger = logging.MustGetLogger("main")
+	logger = logging.MustGetLogger("server")
 )
 
 func init() {
@@ -30,11 +29,8 @@ func init() {
 	logging.SetBackend(backendConsole2Formatter)
 	logging.SetLevel(logging.INFO, "")
 	logging.SetLevel(logging.ERROR, "golobo")
+	logging.SetLevel(logging.CRITICAL, "tunnel")
 }
-
-const (
-	path = "/golobo/rpc/server/lists"
-)
 
 type Event struct{}
 
@@ -56,10 +52,10 @@ func main() {
 
 	target := &golobo.Target{
 		Ip:      "127.0.0.1",
-		Rpc:     7778,
-		Tunnel:  8002,
-		Service: "dummy",
-		Version: "v0.2",
+		Rpc:     7773,
+		Tunnel:  8883,
+		Service: "demo",
+		Version: "v0.1",
 	}
 
 	tunnel.Init(5, 2)
@@ -86,26 +82,9 @@ func main() {
 	}()
 
 	servers := []string{"192.168.25.5:2190", "192.168.25.5:2191", "192.168.25.5:2192"}
-	conn, _, err := zk.Connect(servers, time.Second*2)
-	if err != nil {
-		logger.Fatal(err)
-	}
-	defer conn.Close()
-	conn.SetLogger(new(MyLog))
-
-	digestACL := zk.DigestACL(zk.PermAll, "shimazaki", "haruka")
-	conn.AddAuth(digestACL[0].Scheme, []byte("shimazaki:haruka"))
-
-	conn.Create("/golobo", []byte("paruru's node"), 0, digestACL)
-	conn.Create("/golobo/rpc", []byte("paruru's node"), 0, digestACL)
-	conn.Create("/golobo/rpc/server", []byte("paruru's node"), 0, digestACL)
-	conn.Create("/golobo/rpc/server/lists", []byte("paruru's node"), 0, digestACL)
-
-	msg, err := conn.Create(fmt.Sprint(path, "/", target.String()), []byte("paruru's node"), 0, digestACL)
-	if err != nil {
+	if err := golobo.Publish(servers, target); err != nil {
 		logger.Error(err)
 	}
-	logger.Info("create >>", msg)
 
 	wait := make(chan int)
 	<-wait

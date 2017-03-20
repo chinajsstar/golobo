@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/amamina/golobo"
-	pb "github.com/amamina/golobo/test"
+	pb "github.com/amamina/golobo/example"
 	"github.com/op/go-logging"
 )
 
 var (
-	logger = logging.MustGetLogger("test")
+	logger = logging.MustGetLogger("client")
 )
 
 func init() {
@@ -37,11 +37,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	_error := make(chan error)
+	defer close(_error)
 
 	servers := []string{"192.168.25.5:2190", "192.168.25.5:2191", "192.168.25.5:2192"}
-	path := "/golobo/rpc/server/lists"
 
-	go golobo.Init(servers, "digest", []byte("shimazaki:haruka"), path, _error)
+	go golobo.Init(servers, _error)
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -49,12 +49,13 @@ func main() {
 		case err := <-_error:
 			logger.Error(err)
 			cancel()
+			return
 		}
 	}()
 
 	go func() {
 		for _ = range time.NewTicker(time.Second * 10).C {
-			conn, err := golobo.GetConn("dummy", "v0.2")
+			conn, err := golobo.GetConn("demo", "v0.2")
 			if err != nil {
 				logger.Fatal(err)
 			}
