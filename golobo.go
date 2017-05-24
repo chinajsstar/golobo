@@ -42,7 +42,7 @@ func (l *MyLog) Printf(msg string, args ...interface{}) {
 	//	logger.Info(msg, args)
 }
 
-func Init(servers []string, _error chan error) {
+func Init(servers []string, ttl int, _error chan error) {
 
 	conn, _, err := initPath(servers)
 	if err != nil {
@@ -91,7 +91,7 @@ func Init(servers []string, _error chan error) {
 							alive.targets[target.Service][target.Version] = make(map[string]*Target, 100)
 						}
 						if _, ok := alive.targets[target.Service][target.Version][target.String()]; !ok {
-							go tunnel.ConnecToServer(fmt.Sprint(target.GetIp(), ":", strconv.FormatInt(target.GetTunnel(), 10)), &Event{target})
+							go tunnel.ConnecToServer(fmt.Sprint(target.GetIp(), ":", strconv.FormatInt(target.GetTunnel(), 10)), ttl, &Event{target})
 						}
 					}
 				}
@@ -189,7 +189,7 @@ func (e *Event) OnOpen(handle tunnel.Handle) {
 	alive.addTarget(e.target)
 }
 
-func (e *Event) OnClose(localAddr string) {
+func (e *Event) OnClose(localAddr string, err error) {
 	//	logger.Info("removeTarget", e.target.String())
 	alive.removeTarget(e.target)
 }

@@ -58,10 +58,10 @@ func main() {
 		Version: "v0.1",
 	}
 
-	tunnel.Init(5, 2)
+	tunnel.InitHeartBeat(15, 3)
 	logger.Info(">>>>> ", target.String())
 	go func() {
-		if err := tunnel.ListenOn(int(target.Tunnel), new(Event)); err != nil {
+		if err := tunnel.ListenOn(int(target.Tunnel), 3, new(Event)); err != nil {
 			logger.Fatal(err)
 		}
 	}()
@@ -93,7 +93,7 @@ func main() {
 func (e *Event) OnOpen(handle tunnel.Handle) {
 }
 
-func (e *Event) OnClose(remoteAddr string) {
+func (e *Event) OnClose(remoteAddr string, err error) {
 }
 
 func (e *Event) OnMessage(handle tunnel.Handle, payload []byte) {

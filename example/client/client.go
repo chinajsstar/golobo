@@ -41,7 +41,7 @@ func main() {
 
 	servers := []string{"192.168.25.5:2190", "192.168.25.5:2191", "192.168.25.5:2192"}
 
-	go golobo.Init(servers, _error)
+	go golobo.Init(servers, 3, _error)
 	go func() {
 		select {
 		case <-ctx.Done():
